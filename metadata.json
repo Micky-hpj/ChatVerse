@@ -1,0 +1,7 @@
+{
+  "name": "ChatVerse",
+  "description": "A free-to-use, ChatGPT-like conversational AI powered by Google's Gemini models. Engage in natural conversations, get answers, and explore ideas seamlessly.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
