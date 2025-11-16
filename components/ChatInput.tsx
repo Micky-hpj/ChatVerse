@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { SendIcon, MicrophoneIcon, PaperclipIcon } from './Icons';
+import { PdfPreviewModal } from './PdfPreviewModal';
 
 // FIX: Add type definitions for the Web Speech API to resolve TypeScript errors.
 interface SpeechRecognition extends EventTarget {
@@ -29,6 +30,7 @@ interface ChatInputProps {
 export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
   const [value, setValue] = useState('');
   const [image, setImage] = useState<{ data: string; mimeType: string; name: string; } | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
@@ -118,17 +120,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = (reader.result as string).split(',')[1];
-        setImage({
-          data: base64String,
-          mimeType: file.type,
-          name: file.name,
-        });
-      };
-      reader.readAsDataURL(file);
+    if (file) {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = (reader.result as string).split(',')[1];
+          setImage({
+            data: base64String,
+            mimeType: file.type,
+            name: file.name,
+          });
+        };
+        reader.readAsDataURL(file);
+      } else if (file.type === 'application/pdf') {
+        setPdfFile(file);
+      }
     }
     if (e.target) {
         e.target.value = '';
@@ -139,6 +145,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
     setImage(null);
   };
 
+  const handlePdfImageSelect = (selectedImage: { data: string; mimeType: string }) => {
+    setImage({
+        ...selectedImage,
+        name: `Page from ${pdfFile?.name ?? 'PDF'}`
+    });
+    setPdfFile(null);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -149,6 +162,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
 
   return (
     <div className="flex flex-col">
+      {pdfFile && (
+        <PdfPreviewModal
+            file={pdfFile}
+            onClose={() => setPdfFile(null)}
+            onImageSelect={handlePdfImageSelect}
+        />
+      )}
       {image && (
         <div className="mb-2 p-2 bg-gray-700 rounded-lg flex items-center justify-between text-sm animate-in fade-in duration-300">
             <div className="flex items-center gap-2 overflow-hidden">
@@ -170,7 +190,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
             type="file"
             ref={fileInputRef}
             onChange={handleFileChange}
-            accept="image/*"
+            accept="image/*,application/pdf"
             className="hidden"
         />
         <textarea
@@ -178,7 +198,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message ChatVerse..."
+          placeholder="Message ChatVerse... or type /imagine <prompt>"
           rows={1}
           disabled={isLoading}
           className="w-full bg-gray-700 text-gray-200 border border-gray-600 rounded-lg p-3 pr-36 resize-none focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 transition-all duration-200 max-h-48"
@@ -189,7 +209,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
             onClick={handleAttachClick}
             disabled={isLoading || !!image}
             className="p-2 rounded-full text-gray-400 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title="Attach image"
+            title="Attach image or PDF"
           >
             <PaperclipIcon className="w-5 h-5" />
           </button>

@@ -80,12 +80,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isLoading }) 
           </div>
         ) : (
           <div>
-            {isUser && image && (
+            {image && (
               <div className="mb-2">
                 <img
                   src={`data:${image.mimeType};base64,${image.data}`}
-                  alt="User upload"
-                  className="rounded-lg max-w-xs h-auto"
+                  alt={isUser ? "User upload" : "Generated image"}
+                  className="rounded-lg max-w-full md:max-w-md h-auto"
                 />
               </div>
             )}
