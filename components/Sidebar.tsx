@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { PlusIcon, BotIcon, ChatHistoryIcon, UserIcon, SignOutIcon } from './Icons';
+import { PlusIcon, BotIcon, ChatHistoryIcon, UserIcon, SignOutIcon, DownloadIcon } from './Icons';
 import type { ChatHistoryItem } from '../types';
 
 interface SidebarProps {
@@ -9,9 +10,20 @@ interface SidebarProps {
   onLoadChat: (id: string) => void;
   currentUser: string;
   onSignOut: () => void;
+  installPrompt: any;
+  onInstallClick: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onNewChat, chatHistory, currentChatId, onLoadChat, currentUser, onSignOut }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ 
+    onNewChat, 
+    chatHistory, 
+    currentChatId, 
+    onLoadChat, 
+    currentUser, 
+    onSignOut,
+    installPrompt,
+    onInstallClick
+}) => {
   return (
     <aside className="flex-shrink-0 w-16 md:w-64 bg-gray-900/70 p-2 md:p-4 flex flex-col items-center md:items-stretch border-r border-gray-700">
       <div className="flex items-center gap-2 mb-4 justify-center md:justify-start">
@@ -46,14 +58,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewChat, chatHistory, curren
           </button>
         ))}
       </div>
-
+      
       {/* User Profile / Sign Out Section */}
-      <div className="mt-auto border-t border-gray-700 pt-4">
+      <div className="mt-auto border-t border-gray-700 pt-4 space-y-2">
+          {installPrompt && (
+             <button
+                onClick={onInstallClick}
+                className="hidden md:flex items-center justify-start gap-3 w-full p-2 text-green-400 hover:text-white hover:bg-green-900/30 rounded-lg transition-colors"
+                title="Install App"
+             >
+                <DownloadIcon className="w-5 h-5 flex-shrink-0" />
+                <span className="hidden md:inline font-medium">Install App</span>
+             </button>
+          )}
+
           <div className="flex items-center justify-center md:justify-start gap-3 p-2">
               <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0">
                   <UserIcon className="w-5 h-5 text-gray-300"/>
               </div>
-              <span className="hidden md:inline font-semibold text-white truncate flex-1">{currentUser}</span>
+              <div className="hidden md:flex flex-col flex-1 items-start overflow-hidden">
+                <div className="flex items-center gap-2">
+                    <span className="font-semibold text-white truncate">{currentUser}</span>
+                </div>
+              </div>
               <button 
                   onClick={onSignOut}
                   className="hidden md:block p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
@@ -62,6 +89,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewChat, chatHistory, curren
                   <SignOutIcon className="w-5 h-5"/>
               </button>
           </div>
+           
+           {installPrompt && (
+              <button 
+                  onClick={onInstallClick}
+                  className="block md:hidden mt-2 w-full p-2 text-green-400 hover:text-white hover:bg-green-900/30 rounded-lg"
+                  title="Install App"
+              >
+                  <DownloadIcon className="w-5 h-5 mx-auto"/>
+              </button>
+           )}
+
            <button 
               onClick={onSignOut}
               className="block md:hidden mt-2 w-full p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg"

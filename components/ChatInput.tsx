@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { SendIcon, MicrophoneIcon, PaperclipIcon } from './Icons';
+import { SendIcon, MicrophoneIcon, PaperclipIcon, ImageIcon, CubeIcon, CodeIcon } from './Icons';
 import { PdfPreviewModal } from './PdfPreviewModal';
 
 // FIX: Add type definitions for the Web Speech API to resolve TypeScript errors.
@@ -22,21 +22,49 @@ declare global {
   }
 }
 
+type GenerationMode = 'chat' | 'image' | '3d' | 'app';
+
 interface ChatInputProps {
   onSendMessage: (message: string, image?: { data: string; mimeType: string }) => void;
+  onGenerateImage: (prompt: string, image?: { data: string; mimeType: string }) => void;
+  onGenerate3D: (prompt: string, image?: { data: string; mimeType: string }) => void;
+  onGenerateApp: (prompt: string) => void;
   isLoading: boolean;
+  selectedImage?: { data: string; mimeType: string } | null;
+  onImageSelectionCleared?: () => void;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ 
+    onSendMessage, 
+    onGenerateImage, 
+    onGenerate3D, 
+    onGenerateApp, 
+    isLoading,
+    selectedImage,
+    onImageSelectionCleared
+}) => {
   const [value, setValue] = useState('');
   const [image, setImage] = useState<{ data: string; mimeType: string; name: string; } | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<GenerationMode>('chat');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   const isSpeechRecognitionSupported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+
+  // Handle external image selection (e.g., from "Edit Image")
+  useEffect(() => {
+    if (selectedImage) {
+        setImage({ ...selectedImage, name: 'Image to edit' });
+        setMode('image');
+        if (textareaRef.current) {
+            textareaRef.current.focus();
+        }
+        onImageSelectionCleared?.();
+    }
+  }, [selectedImage, onImageSelectionCleared]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -91,21 +119,54 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
       }
     };
   }, [isSpeechRecognitionSupported]);
-
+  
+  const handleModeChange = (newMode: GenerationMode) => {
+    if (mode === newMode) {
+      setMode('chat');
+    } else {
+      setMode(newMode);
+      if (image && newMode !== 'image' && newMode !== '3d') setImage(null); // Clear image if switching to unsupported mode
+    }
+  };
+  
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (isListening && recognitionRef.current) {
       recognitionRef.current.stop();
     }
-    if ((value.trim() || image) && !isLoading) {
-      onSendMessage(value, image ? { data: image.data, mimeType: image.mimeType } : undefined);
-      setValue('');
-      setImage(null);
+    
+    const trimmedValue = value.trim();
+
+    if (isLoading) {
+        return;
     }
+    if ((!trimmedValue && !image && mode === 'chat')) {
+        return;
+    }
+    if ((!trimmedValue && !image && mode === '3d')) {
+        return;
+    }
+    if ((!trimmedValue && mode === 'app')) {
+        return;
+    }
+
+    if (mode === 'image') {
+        onGenerateImage(trimmedValue, image ? { data: image.data, mimeType: image.mimeType } : undefined);
+    } else if (mode === '3d') {
+        onGenerate3D(trimmedValue, image ? { data: image.data, mimeType: image.mimeType } : undefined);
+    } else if (mode === 'app') {
+        onGenerateApp(trimmedValue);
+    } else {
+        onSendMessage(value, image ? { data: image.data, mimeType: image.mimeType } : undefined);
+    }
+    
+    setValue('');
+    setImage(null);
+    setMode('chat');
   };
 
   const handleMicClick = () => {
-    if (isLoading || !recognitionRef.current) return;
+    if (isLoading || !recognitionRef.current || mode !== 'chat') return;
     
     if (isListening) {
       handleSubmit();
@@ -160,6 +221,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
     }
   };
 
+  const placeholderText = {
+    chat: 'Message...',
+    image: image ? 'Describe how to edit this image...' : 'Describe the image you want to create...',
+    '3d': image ? 'Describe the object in the image for 3D conversion...' : 'Describe the 3D model you want to create...',
+    app: 'Describe the app you want to build...'
+  };
+
+  const isSubmitDisabled = isLoading || (mode === 'chat' ? (!value.trim() && !image) : (!value.trim() && !image));
+  // Allow attachment for 3D mode as well
+  const isAttachmentDisabled = isLoading || !!image || (mode !== 'chat' && mode !== 'image' && mode !== '3d');
+
   return (
     <div className="flex flex-col">
       {pdfFile && (
@@ -198,16 +270,59 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message ChatVerse... or type /imagine <prompt>"
+          placeholder={placeholderText[mode]}
           rows={1}
           disabled={isLoading}
-          className="w-full bg-gray-700 text-gray-200 border border-gray-600 rounded-lg p-3 pr-36 resize-none focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 transition-all duration-200 max-h-48"
+          enterKeyHint="send"
+          className={`w-full bg-gray-700 text-gray-200 border border-gray-600 rounded-lg p-3 pr-56 resize-none focus:ring-2 focus:outline-none disabled:opacity-50 transition-all duration-200 max-h-48 ${
+            mode === 'image' ? 'focus:ring-purple-500' : mode === '3d' ? 'focus:ring-orange-500' : mode === 'app' ? 'focus:ring-green-500' : 'focus:ring-blue-500'
+          }`}
         />
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+           <button
+            type="button"
+            onClick={() => handleModeChange('image')}
+            disabled={isLoading}
+            className={`p-2 rounded-full transition-colors disabled:opacity-50 ${
+                mode === 'image'
+                ? 'text-purple-400 bg-purple-500/20'
+                : 'text-gray-400 hover:bg-gray-600'
+            }`}
+            title="Generate/Edit Image"
+            >
+                <ImageIcon className="w-5 h-5" />
+            </button>
+            <button
+                type="button"
+                onClick={() => handleModeChange('3d')}
+                disabled={isLoading}
+                className={`p-2 rounded-full transition-colors disabled:opacity-50 ${
+                    mode === '3d'
+                    ? 'text-orange-400 bg-orange-500/20'
+                    : 'text-gray-400 hover:bg-gray-600'
+                }`}
+                title="Generate 3D Model"
+            >
+                <CubeIcon className="w-5 h-5" />
+            </button>
+            <button
+                type="button"
+                onClick={() => handleModeChange('app')}
+                disabled={isLoading}
+                className={`p-2 rounded-full transition-colors disabled:opacity-50 ${
+                    mode === 'app'
+                    ? 'text-green-400 bg-green-500/20'
+                    : 'text-gray-400 hover:bg-gray-600'
+                }`}
+                title="Create App"
+            >
+                <CodeIcon className="w-5 h-5" />
+            </button>
+
           <button
             type="button"
             onClick={handleAttachClick}
-            disabled={isLoading || !!image}
+            disabled={isAttachmentDisabled}
             className="p-2 rounded-full text-gray-400 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Attach image or PDF"
           >
@@ -217,7 +332,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
             <button
               type="button"
               onClick={handleMicClick}
-              disabled={isLoading}
+              disabled={isLoading || mode !== 'chat'}
               className={`p-2 rounded-full transition-colors disabled:opacity-50 ${
                 isListening 
                   ? 'text-red-500 animate-pulse bg-red-500/20' 
@@ -230,7 +345,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading }
           )}
           <button
             type="submit"
-            disabled={isLoading || (!value.trim() && !image)}
+            disabled={isSubmitDisabled}
             className="p-2 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 disabled:cursor-not-allowed transition-colors"
             title="Send message"
           >

@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Chat, Modality } from '@google/genai';
 import type { ChatMessage, ChatHistoryItem } from './types';
 import { ChatInput } from './components/ChatInput';
 import { ChatMessage as ChatMessageComponent } from './components/ChatMessage';
 import { Sidebar } from './components/Sidebar';
-import { ChatVerseIcon } from './components/Icons';
+import { ChatVerseIcon, CubeIcon, CodeIcon, ImageIcon, MessageSquareIcon } from './components/Icons';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { SignIn } from './components/SignIn';
 
@@ -16,7 +17,36 @@ const App: React.FC = () => {
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [editImage, setEditImage] = useState<{ data: string; mimeType: string } | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // PWA Install Prompt Handler
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setInstallPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    // Show the install prompt
+    installPrompt.prompt();
+    // Wait for the user to respond to the prompt
+    const { outcome } = await installPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    // We've used the prompt, and can't use it again, throw it away
+    setInstallPrompt(null);
+  };
 
   // On mount, check for a logged-in user
   useEffect(() => {
@@ -30,7 +60,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // When currentUser changes, reset chat state and load their history
+  // When currentUser changes, load their data (history)
   useEffect(() => {
     if (currentUser) {
       // Reset current chat view
@@ -38,477 +68,579 @@ const App: React.FC = () => {
       setCurrentChatId(null);
       initializeChat();
 
-      // Load their history
       try {
+        // Load chat history
         const savedHistory = localStorage.getItem(`chatHistory_${currentUser}`);
         if (savedHistory) {
           setChatHistory(JSON.parse(savedHistory));
         } else {
-          setChatHistory([]); // No history for this user yet
+            setChatHistory([]);
         }
       } catch (error) {
-        console.error("Failed to load chat history for user:", error);
-        setChatHistory([]);
-        localStorage.removeItem(`chatHistory_${currentUser}`);
+        console.error("Failed to load user data:", error);
       }
-    } else {
-      // User signed out, clear everything
-      setChatHistory([]);
-      setMessages([]);
-      setCurrentChatId(null);
     }
   }, [currentUser]);
 
-  // Save history to localStorage whenever it changes
+  // Scroll to bottom when messages change
   useEffect(() => {
-    try {
-      if (currentUser && chatHistory.length > 0) {
-        localStorage.setItem(`chatHistory_${currentUser}`, JSON.stringify(chatHistory));
-      } else if (currentUser && chatHistory.length === 0) {
-        // If history is cleared for the current user, remove it from storage
-        localStorage.removeItem(`chatHistory_${currentUser}`);
-      }
-    } catch (error) {
-      console.error("Failed to save chat history to localStorage:", error);
-    }
-  }, [chatHistory, currentUser]);
-
-  const initializeChat = useCallback(() => {
-    try {
-      if (!process.env.API_KEY) {
-        console.error("API_KEY environment variable not set.");
-        alert("API Key is not configured. Please set the API_KEY environment variable.");
-        return;
-      }
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const newChat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: {
-          systemInstruction: 'You are a helpful and friendly AI assistant named ChatVerse. Format your responses using markdown.',
-        },
-      });
-      setChat(newChat);
-    } catch (error) {
-      console.error("Error initializing chat:", error);
-      alert("Failed to initialize the chat session. Please check your API key and network connection.");
-    }
-  }, []);
-  
-  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
   }, [messages]);
 
-  // Save current chat messages to history when they change
-  useEffect(() => {
-    if (currentChatId && messages.length > 0) {
-      setChatHistory(prevHistory => {
-        const chatIndex = prevHistory.findIndex(chat => chat.id === currentChatId);
-        
-        if (chatIndex !== -1) {
-          // Update existing chat
-          const updatedHistory = [...prevHistory];
-          updatedHistory[chatIndex] = { ...updatedHistory[chatIndex], messages };
-          return updatedHistory;
-        } else {
-          // Add new chat to history
-          const firstUserMessage = messages.find(m => m.role === 'user');
-          const title = firstUserMessage ? (firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '')) : "New Chat";
-          return [...prevHistory, { id: currentChatId, title, messages }];
-        }
+  const initializeChat = async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const newChat = ai.chats.create({
+      model: 'gemini-2.5-flash',
+      config: {
+        systemInstruction: "You are ChatVerse, a helpful, witty, and knowledgeable AI assistant. You can write code, generate images (using a separate tool), create 3D models, and help with analysis.",
+      },
+    });
+    setChat(newChat);
+  };
+
+  const saveChatHistory = (chatId: string, updatedMessages: ChatMessage[]) => {
+      if (!currentUser) return;
+
+      const title = updatedMessages[0]?.content.slice(0, 30) + (updatedMessages[0]?.content.length > 30 ? '...' : '') || 'New Chat';
+      
+      setChatHistory((prevHistory) => {
+          const existingIndex = prevHistory.findIndex(item => item.id === chatId);
+          let newHistory;
+          
+          if (existingIndex >= 0) {
+              newHistory = [...prevHistory];
+              newHistory[existingIndex] = { ...newHistory[existingIndex], messages: updatedMessages, title };
+          } else {
+              newHistory = [...prevHistory, { id: chatId, title, messages: updatedMessages }];
+          }
+
+          try {
+             localStorage.setItem(`chatHistory_${currentUser}`, JSON.stringify(newHistory));
+          } catch (e: any) {
+              // Handle quota exceeded
+             if (e.name === 'QuotaExceededError' || e.message?.includes('exceeded the quota')) {
+                 // Simplistic strategy: remove the oldest chat
+                 if (newHistory.length > 1) {
+                     newHistory.shift();
+                     try {
+                        localStorage.setItem(`chatHistory_${currentUser}`, JSON.stringify(newHistory));
+                     } catch (retryError) {
+                         console.error("Failed to save history even after cleanup", retryError);
+                     }
+                 }
+             }
+          }
+          return newHistory;
       });
-    }
-  }, [messages, currentChatId]);
+  };
 
-  const handleImageGeneration = async (prompt: string) => {
-    if (!prompt || isLoading) return;
-
-    let chatId = currentChatId;
-    if (!chatId) {
-      chatId = crypto.randomUUID();
-      setCurrentChatId(chatId);
-    }
+  const handleSendMessage = async (text: string, image?: { data: string; mimeType: string }) => {
+    if (!chat) return;
+    
+    // Ensure we have a valid chat ID
+    const chatId = currentChatId || Date.now().toString();
+    if (!currentChatId) setCurrentChatId(chatId);
 
     setIsLoading(true);
-    const userMsgId = crypto.randomUUID();
-    const modelMsgId = crypto.randomUUID();
+    const newMessageId = Date.now().toString();
 
-    const userMessageEntry: ChatMessage = {
-      id: userMsgId,
+    const userMessage: ChatMessage = {
+      id: newMessageId,
       role: 'user',
-      content: `/imagine ${prompt}`,
+      content: text,
+      image,
     };
 
-    const modelMessageEntry: ChatMessage = {
-      id: modelMsgId,
-      role: 'model',
-      content: '', // This will be the loading placeholder
-    };
-
-    setMessages((prevMessages) => [...prevMessages, userMessageEntry, modelMessageEntry]);
+    setMessages((prev) => {
+        const newMessages = [...prev, userMessage];
+        // Save immediately so we don't lose user message if error occurs
+        saveChatHistory(chatId, newMessages);
+        return newMessages;
+    });
 
     try {
-        if (!process.env.API_KEY) {
-            throw new Error("API Key is not configured.");
-        }
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: {
-                parts: [{ text: prompt }],
-            },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
-        });
+      let result;
+      
+      if (image) {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          const promptParts: any[] = [{ text }];
+          promptParts.push({
+             inlineData: {
+                 mimeType: image.mimeType,
+                 data: image.data
+             }
+          });
+          
+          result = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: { parts: promptParts }
+          });
 
-        let generatedImage: { data: string; mimeType: string; } | undefined;
-        const parts = response.candidates?.[0]?.content?.parts;
-        if (parts) {
-            for (const part of parts) {
+      } else {
+          result = await chat.sendMessage({ message: text });
+      }
+
+      const responseText = result.text;
+
+      const botMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: responseText,
+      };
+
+      setMessages((prev) => {
+          const newMessages = [...prev, botMessage];
+          saveChatHistory(chatId, newMessages);
+          return newMessages;
+      });
+
+    } catch (error) {
+      console.error("Chat Error:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: 'model',
+          content: "Sorry, I encountered an error. Please try again.",
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleImageGeneration = async (prompt: string, inputImage?: { data: string; mimeType: string }) => {
+      const chatId = currentChatId || Date.now().toString();
+      if (!currentChatId) setCurrentChatId(chatId);
+
+      setIsLoading(true);
+      
+      // Add user message
+      setMessages(prev => {
+          const content = inputImage ? `Edit image: ${prompt}` : `Generate image: ${prompt}`;
+          const newMsg: ChatMessage = { 
+              id: Date.now().toString(), 
+              role: 'user', 
+              content,
+              image: inputImage 
+          };
+          saveChatHistory(chatId, [...prev, newMsg]);
+          return [...prev, newMsg];
+      });
+
+      try {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          
+          const parts: any[] = [];
+          if (inputImage) {
+              parts.push({
+                  inlineData: {
+                      data: inputImage.data,
+                      mimeType: inputImage.mimeType
+                  }
+              });
+          }
+          parts.push({ text: prompt });
+
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash-image',
+              contents: { parts },
+              config: {
+                imageConfig: {
+                    aspectRatio: "1:1"
+                }
+              }
+          });
+
+          let imageUrl = '';
+          // Iterate through parts to find the image
+          if (response.candidates?.[0]?.content?.parts) {
+            for (const part of response.candidates[0].content.parts) {
                 if (part.inlineData) {
-                    generatedImage = {
-                        data: part.inlineData.data,
-                        mimeType: part.inlineData.mimeType
-                    };
+                    imageUrl = part.inlineData.data;
                     break;
                 }
             }
-        }
+          }
+
+          if (imageUrl) {
+              const botMessage: ChatMessage = {
+                  id: (Date.now() + 1).toString(),
+                  role: 'model',
+                  content: inputImage ? `Here is your edited image for "${prompt}"` : `Here is your image for "${prompt}"`,
+                  image: {
+                      data: imageUrl,
+                      mimeType: 'image/png'
+                  }
+              };
+              setMessages(prev => {
+                  const newMsgs = [...prev, botMessage];
+                  saveChatHistory(chatId, newMsgs);
+                  return newMsgs;
+              });
+          } else {
+              throw new Error("No image data returned");
+          }
+
+      } catch (error) {
+          console.error("Image Gen Error:", error);
+          setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: "Failed to generate image. Please try again." }]);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  const handleTriggerEditImage = (img: { data: string; mimeType: string }) => {
+      setEditImage(img);
+  };
+
+  const handle3DGeneration = async (prompt: string, inputImage?: { data: string; mimeType: string }) => {
+    const chatId = currentChatId || Date.now().toString();
+    if (!currentChatId) setCurrentChatId(chatId);
+
+    setIsLoading(true);
+    
+    // Add user message
+    setMessages(prev => {
+        const content = inputImage ? `Convert image to 3D: ${prompt}` : `Generate 3D Model: ${prompt}`;
+        const newMsg: ChatMessage = { 
+            id: Date.now().toString(), 
+            role: 'user', 
+            content,
+            image: inputImage 
+        };
+        saveChatHistory(chatId, [...prev, newMsg]);
+        return [...prev, newMsg];
+    });
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
-        if (generatedImage) {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === modelMsgId 
-                ? { ...msg, content: '', image: generatedImage } 
-                : msg
-              )
-            );
-        } else {
-            throw new Error("Image generation failed. No image data received from the API.");
+        const fullPrompt = `
+        Create a highly detailed, fully functional, single-file HTML 3D application using Three.js to visualize: "${prompt}".
+        ${inputImage ? "Analyze the attached image and create a 3D representation of the main object depicted. Use Three.js primitives and advanced geometries composed together to approximate the shape and look." : ""}
+        
+        CRITICAL IMPLEMENTATION DETAILS:
+        1. Import Map:
+        <script type="importmap">
+          {
+            "imports": {
+              "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+              "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+              "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js"
+            }
+          }
+        </script>
+
+        2. Setup:
+           - Script type="module".
+           - WebGLRenderer (antialias: true, alpha: true, shadowMap enabled, toneMapping = THREE.ACESFilmicToneMapping).
+           - PerspectiveCamera.
+           - **OrbitControls**: Enable interaction (zoom, pan, rotate). Set \`enableDamping: true\` and \`dampingFactor: 0.05\`. Set \`autoRotate: true\`.
+           - **Lighting Setup**:
+             - HemisphereLight (skyColor: 0xffffff, groundColor: 0x444444, intensity: 0.6).
+             - DirectionalLight (Key light, color: 0xffffff, intensity: 1, castShadow enabled, position set).
+             - AmbientLight (soft fill, intensity: 0.3).
+           - Scene: GridHelper and a ground PlaneGeometry (receiveShadow: true, dark matte material). Set \`scene.background\` to a new THREE.Color('#111111').
+
+        3. **Dynamic Controls (GUI) - REQUIRED**:
+           - Import \`GUI\` from 'lil-gui'.
+           - Initialize \`const gui = new GUI();\`.
+           
+           - **Lighting Folder**:
+             - Add controls for **Directional Light**: Intensity (0-2), Color, Position X/Y/Z (-10 to 10).
+             - Add controls for **Ambient Light**: Intensity (0-1).
+
+           - **Scene & Camera Folder**:
+             - **Background Color**: Add a color controller (e.g., \`params.backgroundColor\`) that updates \`scene.background\`.
+             - **Auto Rotate**: Add a checkbox to toggle \`controls.autoRotate\`.
+             - **Rotation Speed**: Add a slider for \`controls.autoRotateSpeed\` (0 to 20).
+             - **Wireframe Mode**: Add a checkbox to toggle wireframe on all meshes.
+
+        4. ADVANCED MODELING INSTRUCTIONS (CRITICAL):
+           - **NO EXTERNAL ASSETS**: You cannot load .obj/.gltf files. You MUST write code to build the geometry.
+           - **CHARACTER / PERSON GENERATION (e.g., "Shah Rukh Khan", "Iron Man"):**
+             * **Hierarchical Construction**: Create a "Mannequin" or "Art Toy" style figure using \`THREE.Group\`.
+             * **Body Parts**: 
+               - Use \`SphereGeometry\` or \`dodecahedronGeometry\` for the head.
+               - Use \`CylinderGeometry\` or \`BoxGeometry\` (scaled) for torso and limbs.
+               - Use \`SphereGeometry\` for joints (shoulders, elbows, knees) to make it look organic.
+             * **Likeness & Identity**: 
+               - **Costume**: Apply specific colors and \`MeshStandardMaterial\` to specific body parts to match the character's iconic outfit (e.g., black suit, colorful jacket, superhero armor).
+               - **Hair**: Construct specific hairstyles using multiple overlapping \`SphereGeometry\` or \`ConeGeometry\` primitives, or use \`LatheGeometry\`.
+               - **Face**: If possible, use a helper function to draw a simple face (eyes, mouth) on a canvas and use it as a \`map\` for the head material.
+               - **Accessories**: Add details like sunglasses, swords, capes, or hats using primitives.
+           - **COMPLEX OBJECTS**: Deconstruct into geometric primitives. Use \`THREE.ExtrudeGeometry\` for complex 2D profiles extruded to 3D.
+           - **Materials**: Use \`MeshStandardMaterial\` with appropriate \`roughness\` and \`metalness\` to enhance realism under the dynamic lights.
+
+        5. Animation:
+           - Add a simple idle animation inside the requestAnimationFrame loop (e.g., \`bodyGroup.position.y = Math.sin(Date.now() * 0.002) * 0.1;\` or arm swaying).
+
+        6. Output:
+           - Return ONLY the raw HTML code starting with <!DOCTYPE html>.
+           - Do not use markdown backticks.
+        `;
+
+        const parts: any[] = [];
+        if (inputImage) {
+            parts.push({
+                inlineData: {
+                    data: inputImage.data,
+                    mimeType: inputImage.mimeType
+                }
+            });
         }
+        parts.push({ text: fullPrompt });
+
+        const result = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts }
+        });
+
+        const generatedHtml = result.text.replace(/```html/g, '').replace(/```/g, '').trim();
+
+        const botMessage: ChatMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            content: `Here is your 3D scene based on "${prompt}". Use the GUI to adjust lighting, background, and camera settings. You can also zoom (scroll), pan (right-click), and rotate (left-click) the view.\n\n\`\`\`html\n${generatedHtml}\n\`\`\``,
+        };
+
+        setMessages(prev => {
+            const newMsgs = [...prev, botMessage];
+            saveChatHistory(chatId, newMsgs);
+            return newMsgs;
+        });
 
     } catch (error) {
-        console.error('Error generating image:', error);
-        const errorContent = error instanceof Error ? error.message : "An unknown error occurred during image generation.";
-        setMessages((prev) =>
-            prev.map((msg) =>
-                msg.id === modelMsgId ? { ...msg, content: `Error: ${errorContent}` } : msg
-            )
-        );
+        console.error("3D Generation Error:", error);
+         setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            content: "Sorry, I encountered an error. Please try again.",
+          },
+        ]);
     } finally {
         setIsLoading(false);
     }
   };
 
-  const handleSendMessage = async (userMessage: string, image?: { data: string; mimeType: string }) => {
-    if (userMessage.trim().toLowerCase().startsWith('/imagine ')) {
-        await handleImageGeneration(userMessage.substring(8).trim());
-        return;
-    }
-
-    if (!chat || isLoading) return;
-
-    let chatId = currentChatId;
-    // If it's the start of a new conversation, create a new ID.
-    if (!chatId) {
-      chatId = crypto.randomUUID();
-      setCurrentChatId(chatId);
-    }
-
-    const effectiveMessage = userMessage || (image ? "Describe this image." : "");
-    if (!effectiveMessage.trim() && !image) {
-      return;
-    }
+  const handleAppGeneration = async (prompt: string) => {
+    const chatId = currentChatId || Date.now().toString();
+    if (!currentChatId) setCurrentChatId(chatId);
 
     setIsLoading(true);
-    const userMsgId = crypto.randomUUID();
-    const modelMsgId = crypto.randomUUID();
-
-    const userMessageEntry: ChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      content: effectiveMessage,
-      image,
-    };
-
-    const modelMessageEntry: ChatMessage = {
-      id: modelMsgId,
-      role: 'model',
-      content: '',
-    };
-
-    setMessages((prevMessages) => [...prevMessages, userMessageEntry, modelMessageEntry]);
+    
+    setMessages(prev => {
+        const newMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: `Create App: ${prompt}` };
+        saveChatHistory(chatId, [...prev, newMsg]);
+        return [...prev, newMsg];
+    });
 
     try {
-      const messageParts: (string | { inlineData: { data: string; mimeType: string; } })[] = [];
-      if (image) {
-        messageParts.push({
-          inlineData: {
-            data: image.data,
-            mimeType: image.mimeType,
-          },
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const fullPrompt = `
+        Create a single-file HTML/CSS/JS web application based on this request: "${prompt}".
+        
+        Requirements:
+        1. Use Tailwind CSS via CDN: <script src="https://cdn.tailwindcss.com"></script>
+        2. Use FontAwesome for icons if needed.
+        3. Make the design modern, responsive, and visually appealing (dark mode preferred).
+        4. Include all functionality within the single file.
+        5. Return ONLY the HTML code starting with <!DOCTYPE html>.
+        `;
+
+        const result = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: fullPrompt
         });
-      }
-      messageParts.push(effectiveMessage);
+        
+        const generatedCode = result.text.replace(/```html/g, '').replace(/```/g, '').trim();
 
-      const result = await chat.sendMessageStream({ message: messageParts });
+        const botMessage: ChatMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            content: `Here is your app based on "${prompt}".\n\n\`\`\`html\n${generatedCode}\n\`\`\``,
+        };
 
-      let text = '';
-      for await (const chunk of result) {
-        text += chunk.text;
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === modelMsgId ? { ...msg, content: text } : msg
-          )
-        );
-      }
+        setMessages(prev => {
+            const newMsgs = [...prev, botMessage];
+            saveChatHistory(chatId, newMsgs);
+            return newMsgs;
+        });
+
     } catch (error) {
-      console.error('Error sending message:', error);
-      const errorContent = error instanceof Error ? error.message : "An unknown error occurred.";
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === modelMsgId ? { ...msg, content: `Error: ${errorContent}` } : msg
-        )
-      );
+        console.error("App Generation Error:", error);
+        setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: "Failed to generate the app. Please try again." }]);
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
+  };
+
+
+  const handleNewChat = () => {
+      setMessages([]);
+      setCurrentChatId(null);
+      initializeChat();
+  };
+
+  const handleLoadChat = (id: string) => {
+      const historyItem = chatHistory.find(item => item.id === id);
+      if (historyItem) {
+          setCurrentChatId(id);
+          setMessages(historyItem.messages);
+          // Re-initialize chat model context if needed, though for this simple app 
+          // we are just loading messages. The next sendMessage will grab a new instance 
+          // or we can reuse the existing one.
+          initializeChat();
+      }
   };
   
-  const handleNewChat = () => {
-    setMessages([]);
-    setCurrentChatId(null);
-    initializeChat();
-  };
-
-  const handleLoadChat = (chatId: string) => {
-    const chatToLoad = chatHistory.find(chat => chat.id === chatId);
-    if (chatToLoad) {
-      setCurrentChatId(chatToLoad.id);
-      setMessages(chatToLoad.messages);
-      initializeChat();
-    }
-  };
-
   const handleSignIn = (username: string) => {
-    if (username.trim()) {
-        try {
-            localStorage.setItem('currentUser', username.trim());
-            setCurrentUser(username.trim());
-        } catch(error) {
-            console.error("Failed to set user in localStorage:", error);
-            alert("Could not sign in. Your browser might be configured to block local storage.");
-        }
-    }
+      setCurrentUser(username);
+      localStorage.setItem('currentUser', username);
   };
 
   const handleSignOut = () => {
-      try {
-        localStorage.removeItem('currentUser');
-        setCurrentUser(null);
-      } catch(error) {
-        console.error("Failed to sign out:", error);
-      }
+      setCurrentUser(null);
+      localStorage.removeItem('currentUser');
+      setMessages([]);
+      setChatHistory([]);
   };
-
+  
   if (!currentUser) {
-    return <SignIn onSignIn={handleSignIn} />;
+      return <SignIn onSignIn={handleSignIn} />;
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-800 text-white">
+    <div className="flex h-screen bg-gray-800 text-white overflow-hidden">
       <Sidebar 
-        onNewChat={handleNewChat}
-        onLoadChat={handleLoadChat}
-        chatHistory={chatHistory}
+        onNewChat={handleNewChat} 
+        chatHistory={chatHistory} 
         currentChatId={currentChatId}
+        onLoadChat={handleLoadChat}
         currentUser={currentUser}
         onSignOut={handleSignOut}
+        installPrompt={installPrompt}
+        onInstallClick={handleInstallClick}
       />
-      <div className="flex flex-col flex-1">
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
-          <div className="max-w-7xl mx-auto">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center text-center text-gray-400 py-8">
-                <div className="p-5 bg-gradient-to-br from-blue-600 to-purple-700 rounded-full mb-6 shadow-lg">
-                  <ChatVerseIcon className="w-16 h-16 text-white" />
-                </div>
-                <h1 className="text-4xl font-bold tracking-tight text-gray-100 sm:text-5xl">Welcome to ChatVerse</h1>
-                <p className="mt-4 text-lg mb-8 max-w-2xl">
-                  Your friendly AI assistant. Here are some of the things I can do. 
-                  Start a new conversation to begin.
-                </p>
-                <div className="w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-8 text-left px-4">
-                    {/* General Intelligence & Reasoning */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🌐 General Intelligence & Reasoning</h3>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Understand and respond in natural conversation</li>
-                            <li>Deep reasoning (math, logic, planning, step-by-step problems)</li>
-                            <li>Multi-turn memory (when you explicitly ask me to remember something)</li>
-                            <li>Explain concepts at any level (beginner → expert)</li>
-                        </ul>
-                    </div>
 
-                    {/* Text & Language */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">✍️ Text & Language</h3>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Write: essays, emails, articles, stories, scripts, poetry</li>
-                            <li>Rewrite: simpler, more formal, longer, shorter</li>
-                            <li>Translate between 100+ languages</li>
-                            <li>Summarize long documents, books, transcripts</li>
-                            <li>Analyze sentiment, tone, themes</li>
-                            <li>Generate ideas: brainstorming, lists, outlines</li>
-                        </ul>
-                    </div>
-                    
-                    {/* Coding & Software Development */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">💻 Coding & Software Development</h3>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Write, debug, refactor code (Python, JS, Java, C#, C++, Rust, etc.)</li>
-                            <li>Explain code behavior and errors</li>
-                            <li>Build end-to-end projects (apps, games, APIs, websites)</li>
-                            <li>Generate documentation and tests</li>
-                            <li>Run Python code (with <code>python_user_visible</code> for user-visible output)</li>
-                            <li>Create files: JSON, YAML, SQL, scripts, etc.</li>
-                        </ul>
-                    </div>
-                    
-                    {/* Web Browsing */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🌐 Web Browsing (Real-Time Info)</h3>
-                        <p className="text-sm mb-2 text-gray-300">When asked or needed, I can:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Search the internet</li>
-                            <li>Check current data (news, sports, elections, finance, companies, people)</li>
-                            <li>Visit websites and extract information</li>
-                        </ul>
-                        <p className="text-xs mt-2 italic text-gray-500">(I only browse when it fits policy — e.g., not for medical diagnosis.)</p>
-                    </div>
-
-                    {/* Images */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🖼️ Images</h3>
-                        <div className="space-y-3">
-                            <div>
-                                <h4 className="font-semibold text-gray-300 text-sm">Image Generation</h4>
-                                <ul className="list-disc list-inside text-sm space-y-1 text-gray-400 mt-1">
-                                    <li>Generate images (art, diagrams, icons, scenes, characters)</li>
-                                    <li>Support multiple sizes and transparent backgrounds</li>
-                                </ul>
-                            </div>
-                            <div>
-                                <h4 className="font-semibold text-gray-300 text-sm">Image Editing</h4>
-                                <ul className="list-disc list-inside text-sm space-y-1 text-gray-400 mt-1">
-                                    <li>Add/remove objects</li>
-                                    <li>Change colors, styles, lighting</li>
-                                    <li>Upscale or clean images</li>
-                                    <li>Transform style (cartoon, painting, etc.)</li>
-                                </ul>
-                                <p className="text-xs italic text-gray-500 mt-1">(If you want an image of yourself, I must first ask for your selfie.)</p>
-                            </div>
-                            <div>
-                                <h4 className="font-semibold text-gray-300 text-sm">Image Understanding</h4>
-                                <ul className="list-disc list-inside text-sm space-y-1 text-gray-400 mt-1">
-                                    <li>Describe images</li>
-                                    <li>Extract text (OCR)</li>
-                                    <li>Analyze graphs, charts, objects</li>
-                                    <li>Explain issues or improvements</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    {/* Data, Files & Output */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">📊 Data, Files & Output</h3>
-                        <p className="text-sm mb-1 text-gray-300">I can generate and export:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400 mb-2">
-                            <li>PDFs (<code>reportlab</code>)</li>
-                            <li>Word (DOCX)</li>
-                            <li>PowerPoint (PPTX)</li>
-                            <li>Excel (XLSX)</li>
-                            <li>CSV, TXT, MD, RTF, ODT, ODS, ODP</li>
-                        </ul>
-                        <p className="text-sm mb-1 text-gray-300">I can also:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Make charts/plots with <code>matplotlib</code></li>
-                            <li>Display dataframes interactively</li>
-                            <li>Perform statistical analysis</li>
-                        </ul>
-                    </div>
-                    
-                    {/* Memory System */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🧠 Memory System</h3>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Can store personal preferences only when you explicitly ask</li>
-                            <li>You can tell me to forget anything</li>
-                            <li>Never store sensitive info unless directly requested</li>
-                        </ul>
-                    </div>
-
-                    {/* Canvas / Document Editing */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🎨 Canvas / Document Editing</h3>
-                        <p className="text-sm mb-1 text-gray-300">I can create:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400 mb-2">
-                            <li>Editable documents</li>
-                            <li>Full webpages</li>
-                            <li>React components</li>
-                            <li>Code files</li>
-                            <li>Structured reports</li>
-                        </ul>
-                        <p className="text-sm text-gray-300">Then you can iterate on them with updates.</p>
-                    </div>
-
-                    {/* Special Skills */}
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700/50">
-                        <h3 className="text-lg font-semibold text-gray-200 mb-2">🤖 Special Skills</h3>
-                        <ul className="list-disc list-inside text-sm space-y-1 text-gray-400">
-                            <li>Act as an assistant (schedule-style tasks, reminders within the chat)</li>
-                            <li>Roleplay and simulate characters</li>
-                            <li>Generate quizzes, flashcards, study materials</li>
-                            <li>Provide tutoring for any subject</li>
-                            <li>Solve step-by-step math (algebra → calculus → proofs)</li>
-                            <li>Provide recommendations (movies, books, travel, recipes)</li>
-                        </ul>
-                    </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {messages.map((message) => (
-                  <ChatMessageComponent key={message.id} message={message} isLoading={isLoading && message.role === 'model' && message.content === ''} />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
+      <div className="flex-1 flex flex-col h-full relative">
+        {/* Header */}
+        <header className="h-16 bg-gray-900/50 border-b border-gray-700 flex items-center justify-between px-6 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+              <ChatVerseIcon className="w-6 h-6 text-blue-500" />
+              <h1 className="text-lg font-semibold text-gray-100 hidden sm:block">
+                  {currentChatId ? chatHistory.find(c => c.id === currentChatId)?.title || 'Chat' : 'New Conversation'}
+              </h1>
           </div>
-        </main>
-        <footer className="bg-gray-800/80 backdrop-blur-sm border-t border-gray-700 p-4">
-          <div className="max-w-4xl mx-auto">
-            <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
-             <p className="text-center text-xs text-gray-500 mt-2">
-              ChatVerse may display inaccurate info. Consider checking important information.
-              {' | '}
-              <button
+          <div className="flex items-center gap-4">
+              
+          </div>
+        </header>
+
+        {/* Chat Area */}
+        <main className="flex-1 overflow-y-auto p-4 scroll-smooth">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 animate-in fade-in zoom-in-95 duration-500">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl">
+                <ChatVerseIcon className="w-10 h-10 text-white" />
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-3">Welcome to ChatVerse</h2>
+              <p className="text-gray-400 max-w-md mb-8">
+                Your AI companion powered by Google's Gemini models.
+              </p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
+                 <button 
+                    onClick={() => handleSendMessage("Help me write a Python script to analyze CSV files.")}
+                    className="p-4 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-xl text-left transition-all hover:scale-[1.02]"
+                 >
+                    <div className="flex items-center gap-3 mb-2">
+                        <MessageSquareIcon className="w-5 h-5 text-blue-400" />
+                        <span className="font-semibold">Chat & Code</span>
+                    </div>
+                    <p className="text-sm text-gray-400">Ask questions, debug code, or get creative writing help.</p>
+                 </button>
+
+                 <button 
+                    onClick={() => handleImageGeneration("A futuristic city floating in the clouds, cyberpunk style.")}
+                    className="p-4 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-xl text-left transition-all hover:scale-[1.02]"
+                 >
+                    <div className="flex items-center gap-3 mb-2">
+                        <ImageIcon className="w-5 h-5 text-purple-400" />
+                        <span className="font-semibold">Generate Images</span>
+                    </div>
+                    <p className="text-sm text-gray-400">Create stunning visuals with Gemini Flash Image.</p>
+                 </button>
+
+                 <button 
+                    onClick={() => handle3DGeneration("A low-poly spinning globe with glowing cities.")}
+                    className="p-4 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-xl text-left transition-all hover:scale-[1.02]"
+                 >
+                    <div className="flex items-center gap-3 mb-2">
+                        <CubeIcon className="w-5 h-5 text-orange-400" />
+                        <span className="font-semibold">3D Models</span>
+                    </div>
+                    <p className="text-sm text-gray-400">Generate interactive 3D scenes using Three.js.</p>
+                 </button>
+
+                 <button 
+                    onClick={() => handleAppGeneration("A Pomodoro timer with a todo list.")}
+                    className="p-4 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-xl text-left transition-all hover:scale-[1.02]"
+                 >
+                    <div className="flex items-center gap-3 mb-2">
+                        <CodeIcon className="w-5 h-5 text-green-400" />
+                        <span className="font-semibold">Build Web Apps</span>
+                    </div>
+                    <p className="text-sm text-gray-400">Create single-file tools and games instantly.</p>
+                 </button>
+              </div>
+              <button 
                 onClick={() => setShowPrivacyPolicy(true)}
-                className="underline hover:text-gray-400"
+                className="mt-8 text-xs text-gray-500 hover:text-gray-300 underline"
               >
                 Privacy Policy
               </button>
+            </div>
+          ) : (
+            <div className="space-y-6 pb-4 max-w-4xl mx-auto">
+              {messages.map((msg) => (
+                <ChatMessageComponent 
+                    key={msg.id} 
+                    message={msg} 
+                    isLoading={isLoading && msg.id === messages[messages.length - 1].id && msg.role === 'model' && !msg.content}
+                    onEditImage={handleTriggerEditImage}
+                />
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </main>
+
+        {/* Input Area */}
+        <div className="p-4 bg-gray-900 border-t border-gray-700">
+          <div className="max-w-4xl mx-auto">
+            <ChatInput 
+              onSendMessage={handleSendMessage} 
+              onGenerateImage={handleImageGeneration}
+              onGenerate3D={handle3DGeneration}
+              onGenerateApp={handleAppGeneration}
+              isLoading={isLoading} 
+              selectedImage={editImage}
+              onImageSelectionCleared={() => setEditImage(null)}
+            />
+            <p className="text-center text-xs text-gray-500 mt-2">
+              Gemini may display inaccurate info, including about people, so double-check its responses.
             </p>
           </div>
-        </footer>
+        </div>
       </div>
-      {showPrivacyPolicy && <PrivacyPolicy onClose={() => setShowPrivacyPolicy(false)} />}
+
+      {showPrivacyPolicy && (
+        <PrivacyPolicy onClose={() => setShowPrivacyPolicy(false)} />
+      )}
     </div>
   );
 };
